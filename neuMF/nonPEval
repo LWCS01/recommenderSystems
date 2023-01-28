@@ -1,0 +1,187 @@
+import pandas as pd
+import warnings
+
+# Ignore DeprecationWarning and UserWarning
+warnings.simplefilter('ignore', DeprecationWarning)
+warnings.simplefilter('ignore', UserWarning)
+warnings.simplefilter(action='ignore', category=FutureWarning)
+
+print('Loading....')
+
+# Load the movies and ratings data
+# movies = pd.read_csv('./movies.dat', sep='::', header=None, names=['movie_id', 'title', 'genres'], engine='python',encoding='latin-1')
+# ratings = pd.read_csv('./ratings.dat', sep='::', header=None, names=['user_id', 'movie_id', 'rating', 'timestamp'], engine='python')
+# Merge the movies and ratings dataframes on the movieId field
+movies = pd.read_csv('./movies.dat', sep='::', header=None, engine='python', encoding='latin-1')
+
+
+movies.columns = ['movie_id', 'title', 'genres']
+
+
+
+
+def reindex_movies(movies):
+    # Extract a list of unique movie IDs from the rating dataset
+    movie_list = list(movies['movie_id'].drop_duplicates())
+    # Create a dictionary that maps the original movie IDs to the new reindexed IDs
+    movie2id = {w: i for i, w in enumerate(movie_list)}
+    # Replace the original movie IDs in the movies dataset with the new reindexed IDs
+    movies['movie_id'] = movies['movie_id'].apply(lambda x: movie2id[x])
+    # Return the reindexed movies dataset
+    return movies
+movies = reindex_movies(movies)
+
+
+originalRatings = pd.read_csv('./ratings.dat', sep='::', header=None, names=['user_id', 'movie_id', 'rating', 'timestamp'], engine='python')
+
+def orginalReindex(originalRatings):
+		"""
+		Process dataset to reindex userID and itemID, also set rating as binary feedback
+		"""
+		user_list = list(originalRatings['user_id'].drop_duplicates())
+		user2id = {w: i for i, w in enumerate(user_list)}
+
+		item_list = list(originalRatings['movie_id'].drop_duplicates())
+		item2id = {w: i for i, w in enumerate(item_list)}
+
+		originalRatings['user_id'] = originalRatings['user_id'].apply(lambda x: user2id[x])
+		originalRatings['movie_id'] = originalRatings['movie_id'].apply(lambda x: item2id[x])
+		#originalRatings['rating'] = originalRatings['rating'].apply(lambda x: float(x > 0))
+		return originalRatings
+
+originalRatings = orginalReindex(originalRatings)
+
+from itertools import combinations
+
+from sklearn.feature_extraction.text import TfidfVectorizer
+
+tf = TfidfVectorizer(analyzer=lambda s: (c for i in range(1,4)
+                                             for c in combinations(s.split('|'), r=i)))
+tfidf_matrix = tf.fit_transform(movies['genres'])
+
+from sklearn.metrics.pairwise import cosine_similarity
+cosine_sim = cosine_similarity(tfidf_matrix)
+
+cosine_sim_df = pd.DataFrame(cosine_sim, index=movies['title'], columns=movies['title'])#column wil be our vector
+
+merged = pd.merge(movies, originalRatings, on='movie_id')
+
+# Filter the merged dataframe to only include movies of the selected genre
+#allMovies = merged[merged['genres'].str.contains(genre)]
+
+# Group the movies by movieId and compute the count and mean of the ratings
+allMovies = merged.groupby('movie_id').agg({'rating': ['count', 'mean']})
+
+# Compute the weighted average mean rating for each movie
+allMovies['weighted_mean'] = allMovies.apply(lambda row: (row[('rating', 'mean')] * row[('rating', 'count')]) / row[('rating', 'count')], axis=1)
+
+# Sort the movies by weighted mean rating and get the top 10
+top_100 = allMovies.sort_values(by='weighted_mean', ascending=False).head(100)
+
+
+
+#for u in test users, diversity = 
+#recs = top_100.sample(10)
+#recs = pd(recs)
+
+# Merge the top 10 movies with the movies dataframe to get the movie titles
+#top_10 = pd.merge(recs, movies, on='movie_id')
+#print(top_10)
+
+import numpy as np
+
+#now hit rate
+
+originalRatings["rank_latest"] = originalRatings.groupby(["user_id"])["timestamp"].rank(
+    method="first", ascending=False
+)
+
+test_ratings =originalRatings[originalRatings["rank_latest"] == 1]
+
+test_ratings = test_ratings[["user_id", "movie_id", "rating"]]
+
+all_movieIds = originalRatings["movie_id"].unique()
+
+num_users = originalRatings["user_id"].max() + 1
+num_items = originalRatings["movie_id"].max() + 1
+
+test_user_item_set = set(zip(test_ratings["user_id"], test_ratings["movie_id"]))
+#print(test_user_item_set)
+
+import random
+test_user_item_set = random.sample(list(test_user_item_set),1000)
+
+
+hits = []
+
+for (u,i) in test_user_item_set:
+  #print(i)
+  choose100 = top_100.sample(99)
+  choose100 = pd.merge(choose100, movies, on='movie_id')
+  choose100List = []
+
+  for i, row in choose100.iterrows():
+    choose100List.append(row['movie_id'])
+  choose100List.append(i)
+
+
+
+  # recs = top_100.sample(10)
+  # #print(recs)
+  # top_10 = pd.merge(recs, movies, on='movie_id')
+  # recsList = []
+  # for i, row in top_10.iterrows():
+  #   # print('')
+  #   recsList.append(row['movie_id'])
+  #print(recsList)
+  recsList = random.sample(choose100List, 10)
+
+  if i in recsList:
+        hits.append(1)
+  else:
+      hits.append(0)
+
+hit_rate = np.average(hits)
+        
+print(f"The Hit Rate @ 10 is {hit_rate}") 
+
+
+
+
+    
+###
+sim10 = []
+for i in range(1000):
+    recommendations = top_100.sample(10)
+
+
+    
+
+
+    sim = 0
+    count = 0
+
+    for i in range(len(recommendations)):
+
+        for j in range(i + 1, len(recommendations)):
+            #print(i,j)
+
+            a = recsList[i]
+            b = recsList[j]
+            print(cosine_sim_df.iloc[a,b])
+            sim += cosine_sim_df.iloc[a,b]
+            count += 1
+
+            print(sim)
+    sim10.append(sim/count)
+print(count)
+diversity = 1 - np.average(sim10)
+
+print(f"The average Diversity across the top 10 recommendations is: {diversity}")
+
+
+
+
+
+
+
